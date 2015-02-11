@@ -1,20 +1,21 @@
 var fs           = require('fs');
+var exec         = require('child_process').exec;
 var util         = require('util');
 var EventEmitter = require('events').EventEmitter;
 var async        = require('async');
 var debug        = require('debug')('rpi-gpio');
 
-var PATH = '/sys/class/gpio';
+var PATH = '/sys/devices/virtual/gpio';
 var PINS = {
     v1: {
         // 1: 3.3v
         // 2: 5v
-        '3':  0,
+        '3': 0,
         // 4: 5v
-        '5':  1,
+        '5': 1,
         // 6: ground
-        '7':  4,
-        '8':  14,
+        '7': 4,
+        '8': 14,
         // 9: ground
         '10': 15,
         '11': 17,
@@ -37,12 +38,12 @@ var PINS = {
     v2: {
         // 1: 3.3v
         // 2: 5v
-        '3':  2,
+        '3': 2,
         // 4: 5v
-        '5':  3,
+        '5': 3,
         // 6: ground
-        '7':  4,
-        '8':  14,
+        '7': 4,
+        '8': 14,
         // 9: ground
         '10': 15,
         '11': 17,
@@ -190,7 +191,7 @@ function Gpio() {
      * @param {boolean}  value   If true, turns the channel on, else turns off
      * @param {function} cb      Optional callback
      */
-    this.write = this.output = function(channel, value, cb /*err*/ ) {
+    this.write = this.output = function(channel, value, cb /*err*/) {
         var pin = getPinForCurrentMode(channel);
 
         if (!exportedOutputPins[pin]) {
@@ -207,7 +208,7 @@ function Gpio() {
         }
 
         value = (!!value && value !== '0') ? '1' : '0';
-        fs.writeFile(PATH + '/gpio' + pin + '/value', value, cb || function () {});
+        fs.writeFile(PATH + '/gpio' + pin + '/value', value, cb || function() {});
     };
 
     /**
@@ -273,7 +274,7 @@ function Gpio() {
         }
 
         fs.readFile('/proc/cpuinfo', 'utf8', function(err, data) {
-            if (err) return cb(err);
+            if (err) {return cb(err);}
 
             // Match the last 4 digits of the number following "Revision:"
             var match = data.match(/Revision\s*:\s*[0-9a-f]*([0-9a-f]{4})/);
@@ -333,7 +334,7 @@ function Gpio() {
         var Gpio = this;
         fs.watchFile(
             PATH + '/gpio' + pin + '/value',
-            { persistent: true, interval: pollFrequency },
+            {persistent: true, interval: pollFrequency},
             function(current, previous) {
                 if (current.mtime > previous.mtime) {
                     Gpio.read(channel, function(err, value) {
@@ -350,32 +351,46 @@ function Gpio() {
 }
 util.inherits(Gpio, EventEmitter);
 
+var baseCommand = 'gpio-admin ';
+
 function setDirection(pin, direction, cb) {
     debug('set direction %s on pin %d', direction.toUpperCase(), pin);
     fs.writeFile(PATH + '/gpio' + pin + '/direction', direction, function(err) {
-        if (cb) return cb(err);
+        if (cb) {
+            return cb(err);
+        }
     });
 }
 
 function exportPin(pin, cb) {
     debug('export pin %d', pin);
-    fs.writeFile(PATH + '/export', pin, function(err) {
-        if (cb) return cb(err);
-    });
+    execCommand(baseCommand + 'export ' + pin, cb);
 }
 
 function unexportPin(pin, cb) {
     debug('unexport pin %d', pin);
     fs.unwatchFile(PATH + '/gpio' + pin + '/value');
-    fs.writeFile(PATH + '/unexport', pin, function(err) {
-        if (cb) return cb(err);
-    });
+    execCommand(baseCommand + 'unexport ' + pin, cb);
 }
 
 function isExported(pin, cb) {
     fs.exists(PATH + '/gpio' + pin, function(exists) {
         return cb(null, exists);
     });
+}
+
+function execCommand(command, cb) {
+
+    exec(command,
+        function(error, stdout, stderr) {
+            if (error) {
+                console.log('command: ' + command);
+                console.log('exec error: ' + error);
+                console.log('stderr: ' + stderr);
+                console.log('stdout: ' + stdout);
+            }
+            return cb(error);
+        });
 }
 
 module.exports = new Gpio;
