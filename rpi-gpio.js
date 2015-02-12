@@ -384,10 +384,10 @@ function execCommand(command, cb) {
     exec(command,
         function(error, stdout, stderr) {
             if (error) {
-                console.log('command: ' + command);
-                console.log('exec error: ' + error);
-                console.log('stderr: ' + stderr);
-                console.log('stdout: ' + stdout);
+                debug('command: ' + command);
+                debug('exec error: ' + error);
+                debug('stderr: ' + stderr);
+                debug('stdout: ' + stdout);
             }
             return cb(error);
         });
