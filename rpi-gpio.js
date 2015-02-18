@@ -150,7 +150,8 @@ function Gpio(options) {
             });
         }
 
-        if (pullupdown !== this.PULL_UP && pullupdown !== this.PULL_DOWN) {
+        if (pullupdown !== this.PULL_UP && pullupdown !== this.PULL_DOWN
+            && pullupdown !== null && pullupdown !== undefined) {
             return process.nextTick(function() {
                 onSetup(new Error('Cannot set invalid pullup/pulldown value'));
             });
