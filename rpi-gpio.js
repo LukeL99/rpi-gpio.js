@@ -4,6 +4,7 @@ var util = require('util');
 var EventEmitter = require('events').EventEmitter;
 var async = require('async');
 var debug = require('debug')('rpi-gpio');
+var Epoll = require('epoll').Epoll;
 
 var PINS = {
     v1: {
@@ -80,6 +81,9 @@ var PINS = {
     }
 };
 
+// OPTIONS:
+// gpioAdmin: true|false - whether to use gpioAdmin or not. If not, must be run as root.
+// mode: 'BCM'|'RPI' - Sets pin numbering scheme. Defaults to RPI;
 function Gpio(options) {
 
     options = options || {};
@@ -87,55 +91,47 @@ function Gpio(options) {
     var currentPins;
     var exportedInputPins = {};
     var exportedOutputPins = {};
-    var getPinForCurrentMode = getPinRpi;
-    var pollFrequency = 5007;
+    var poller;
 
+    var getPin;
+    if(options.mode && options.mode == 'BCM'){
+        debug('Setting mode to BCM.');
+        getPin = getPinBcm;
+    } else {
+        debug('Setting mode to RPI.');
+        getPin = getPinRpi;
+    }
     var path = options.gpioAdmin === true ? '/sys/devices/virtual/gpio' : '/sys/class/gpio';
 
     this.DIR_IN = 'in';
     this.DIR_OUT = 'out';
+    this.PULL_UP = 'pullup';
+    this.PULL_DOWN = 'pulldown';
     this.MODE_RPI = 'mode_rpi';
     this.MODE_BCM = 'mode_bcm';
-
-    /**
-     * Set pin reference mode. Defaults to 'mode_rpi'.
-     *
-     * @param {string} mode Pin reference mode, 'mode_rpi' or 'mode_bcm'
-     */
-    this.setMode = function(mode) {
-        if (mode === this.MODE_RPI) {
-            getPinForCurrentMode = getPinRpi;
-        } else if (mode === this.MODE_BCM) {
-            getPinForCurrentMode = getPinBcm;
-        } else {
-            throw new Error('Cannot set invalid mode');
-        }
-
-        this.emit('modeChange', mode);
-    };
-
-    /**
-     * Set a custom polling frequency for watching pin changes
-     *
-     * @param {number} value The frequency to poll at, in milliseconds
-     */
-    this.setPollFrequency = function(value) {
-        if (typeof value === 'number') {
-            pollFrequency = value;
-        }
-    };
 
     /**
      * Setup a channel for use as an input or output
      *
      * @param {number}   channel   Reference to the pin in the current mode's schema
      * @param {string}   direction The pin direction, either 'in' or 'out'
+     * @param {string}   pullupdown Optional whether to enable pull up or down resistors, either 'pullup' or 'pulldown'.
+     * Currently only available in gpio-admin.
      * @param {function} onSetup   Optional callback
      */
-    this.setup = function(channel, direction, onSetup /*err*/) {
+    /*
+    setup(channel, onSetup)
+    setup(channel, direction, onSetup)
+    setup(channel, direction, pullupdown, onSetup)
+     */
+    this.setup = function(channel, direction, pullupdown, onSetup /*err*/) {
         if (arguments.length === 2 && typeof direction == 'function') {
             onSetup = direction;
             direction = this.DIR_OUT;
+        }
+
+        if (arguments.length === 3 && typeof pullupdown == 'function') {
+            onSetup = pullupdown;
         }
 
         direction = direction || this.DIR_OUT;
@@ -153,11 +149,17 @@ function Gpio(options) {
             });
         }
 
+        if (pullupdown !== this.PULL_UP && pullupdown !== this.PULL_DOWN) {
+            return process.nextTick(function() {
+                onSetup(new Error('Cannot set invalid pullup/pulldown value'));
+            });
+        }
+
         var pinForSetup;
         async.waterfall([
             setRaspberryVersion,
             function(next) {
-                pinForSetup = getPinForCurrentMode(channel);
+                pinForSetup = getPin(channel);
                 if (!pinForSetup) {
                     return next(new Error('Channel ' + channel + ' does not map to a GPIO pin'));
                 }
@@ -171,7 +173,7 @@ function Gpio(options) {
                 return next(null);
             },
             function(next) {
-                exportPin(pinForSetup, next);
+                exportPin(pinForSetup, pullupdown, next);
             },
             function(next) {
                 this.emit('export', channel);
@@ -196,7 +198,7 @@ function Gpio(options) {
      * @param {function} cb      Optional callback
      */
     this.write = this.output = function(channel, value, cb /*err*/) {
-        var pin = getPinForCurrentMode(channel);
+        var pin = getPin(channel);
 
         if (!exportedOutputPins[pin]) {
             var message;
@@ -222,7 +224,7 @@ function Gpio(options) {
      * @param {function} cb      Callback which receives the channel's boolean value
      */
     this.read = this.input = function(channel, cb /*err,value*/) {
-        var pin = getPinForCurrentMode(channel);
+        var pin = getPin(channel);
 
         if (!exportedInputPins[pin]) {
             return process.nextTick(function() {
@@ -230,9 +232,10 @@ function Gpio(options) {
             });
         }
 
-        fs.readFile(path + '/gpio' + pin + '/value', 'utf-8', function(err, data) {
-            data = (data + '').trim() || '0';
-            return cb(err, data === '1');
+        var buffer = new Buffer(1);
+        var fd = fs.openSync(path + '/gpio' + pin + '/value', 'r');
+        fs.read(fd, buffer, 0, 1, 0, function(err, bytesRead, buffer) {
+            return cb(err, buffer.toString() === '1');
         });
     };
 
@@ -242,6 +245,7 @@ function Gpio(options) {
      * @param {function} cb Optional callback
      */
     this.destroy = function(cb) {
+        poller.close();
         var tasks = Object.keys(exportedOutputPins)
             .concat(Object.keys(exportedInputPins))
             .map(function(pin) {
@@ -262,8 +266,7 @@ function Gpio(options) {
         this.removeAllListeners();
 
         currentPins = undefined;
-        getPinForCurrentMode = getPinRpi;
-        pollFrequency = 5007;
+        getPin = getPinRpi;
     };
 
     // Init
@@ -336,21 +339,24 @@ function Gpio(options) {
     function createListener(channel, pin) {
         debug('listen for pin %d', pin);
         var Gpio = this;
-        fs.watchFile(
-            path + '/gpio' + pin + '/value',
-            {persistent: true, interval: pollFrequency},
-            function(current, previous) {
-                if (current.mtime > previous.mtime) {
-                    Gpio.read(channel, function(err, value) {
-                        debug(
-                            'failed to read value after a change on channel %d',
-                            channel
-                        );
-                        Gpio.emit('change', channel, value);
-                    });
-                }
-            }
-        );
+
+        // only initialize poller on first use
+        if(!poller){
+            poller = new Epoll(function (err, fd, events) {
+                // Read GPIO value file. Reading also clears the interrupt.
+                Gpio.read(channel, function(err, value){
+                    Gpio.emit('change', channel, value);
+                });
+            });
+        }
+
+        var fd = fs.openSync(path + '/gpio' + pin + '/value', 'r');
+
+        // Read the GPIO value file before watching to prevent an initial unauthentic interrupt.
+        fs.readSync(fd, new Buffer(1), 0, 1, 0);
+
+        // Start watching for interrupts.
+        poller.add(fd, Epoll.EPOLLPRI);
     };
 
     var baseCommand = 'gpio-admin';
@@ -364,10 +370,14 @@ function Gpio(options) {
         });
     }
 
-    function exportPin(pin, cb) {
-        debug('export pin %d', pin);
+    function exportPin(pin, pullupdown, cb) {
+        debug('export pin %d with pullup/down mode %s', pin, pullupdown);
         if (options.gpioAdmin) {
-            execCommand(baseCommand + ' export ' + pin, cb);
+            if(pullupdown){
+                execCommand(baseCommand + ' export ' + pin + ' ' + pullupdown, cb);
+            } else {
+                execCommand(baseCommand + ' export ' + pin, cb);
+            }
         } else {
             fs.writeFile(path + '/export', pin, cb);
         }
@@ -375,7 +385,8 @@ function Gpio(options) {
 
     function unexportPin(pin, cb) {
         debug('unexport pin %d', pin);
-        fs.unwatchFile(path + '/gpio' + pin + '/value');
+        var fd = fs.openSync(path + '/gpio' + pin + '/value', 'r');
+        poller.remove(fd);
         if (options.gpioAdmin) {
             execCommand(baseCommand + ' unexport ' + pin, cb);
         } else {
@@ -387,10 +398,6 @@ function Gpio(options) {
         fs.exists(path + '/gpio' + pin, function(exists) {
             return cb(null, exists);
         });
-    }
-
-    function setGpioAdmin(cb) {
-
     }
 
 }
