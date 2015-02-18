@@ -247,7 +247,9 @@ function Gpio(options) {
      * @param {function} cb Optional callback
      */
     this.destroy = function(cb) {
-        poller.close();
+        if(poller){
+            poller.close();
+        }
         var tasks = Object.keys(exportedOutputPins)
             .concat(Object.keys(exportedInputPins))
             .map(function(pin) {
