@@ -95,6 +95,7 @@ function Gpio() {
     var currentPins;
     var exportedInputPins = {};
     var exportedOutputPins = {};
+    var options = {};
     var poller;
 
     var getPin = getPinRpi;
@@ -104,7 +105,7 @@ function Gpio() {
     // gpioAdmin: true|false - whether to use gpioAdmin or not. If not, must be run as root. defaults true;
     // mode: 'BCM'|'RPI' - Sets pin numbering scheme. Defaults to RPI;
     this.init = function(options){
-        options = options || {};
+        this.options = options || {};
         if(options.mode && options.mode == 'BCM'){
             debug('Setting mode to BCM.');
             getPin = getPinBcm;
