@@ -132,6 +132,7 @@ function Gpio(options) {
 
         if (arguments.length === 3 && typeof pullupdown == 'function') {
             onSetup = pullupdown;
+            pullupdown = null;
         }
 
         direction = direction || this.DIR_OUT;
