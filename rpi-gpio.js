@@ -389,8 +389,10 @@ function Gpio(options) {
 
     function unexportPin(pin, cb) {
         debug('unexport pin %d', pin);
-        var fd = fs.openSync(path + '/gpio' + pin + '/value', 'r');
-        poller.remove(fd);
+        if(poller){
+            var fd = fs.openSync(path + '/gpio' + pin + '/value', 'r');
+            poller.remove(fd);
+        }
         if (options.gpioAdmin) {
             execCommand(baseCommand + ' unexport ' + pin, cb);
         } else {
