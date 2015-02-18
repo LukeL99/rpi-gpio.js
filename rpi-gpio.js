@@ -1,11 +1,10 @@
-var fs           = require('fs');
-var exec         = require('child_process').exec;
-var util         = require('util');
+var fs = require('fs');
+var exec = require('child_process').exec;
+var util = require('util');
 var EventEmitter = require('events').EventEmitter;
-var async        = require('async');
-var debug        = require('debug')('rpi-gpio');
+var async = require('async');
+var debug = require('debug')('rpi-gpio');
 
-var PATH = '/sys/devices/virtual/gpio';
 var PINS = {
     v1: {
         // 1: 3.3v
@@ -81,15 +80,20 @@ var PINS = {
     }
 };
 
-function Gpio() {
+function Gpio(options) {
+
+    options = options || {};
+
     var currentPins;
-    var exportedInputPins  = {};
+    var exportedInputPins = {};
     var exportedOutputPins = {};
     var getPinForCurrentMode = getPinRpi;
     var pollFrequency = 5007;
 
-    this.DIR_IN   = 'in';
-    this.DIR_OUT  = 'out';
+    var path = options.gpioAdmin === true ? '/sys/devices/virtual/gpio' : '/sys/class/gpio';
+
+    this.DIR_IN = 'in';
+    this.DIR_OUT = 'out';
     this.MODE_RPI = 'mode_rpi';
     this.MODE_BCM = 'mode_bcm';
 
@@ -208,7 +212,7 @@ function Gpio() {
         }
 
         value = (!!value && value !== '0') ? '1' : '0';
-        fs.writeFile(PATH + '/gpio' + pin + '/value', value, cb || function() {});
+        fs.writeFile(path + '/gpio' + pin + '/value', value, cb || function() {});
     };
 
     /**
@@ -226,7 +230,7 @@ function Gpio() {
             });
         }
 
-        fs.readFile(PATH + '/gpio' + pin + '/value', 'utf-8', function(err, data) {
+        fs.readFile(path + '/gpio' + pin + '/value', 'utf-8', function(err, data) {
             data = (data + '').trim() || '0';
             return cb(err, data === '1');
         });
@@ -254,7 +258,7 @@ function Gpio() {
      */
     this.reset = function() {
         exportedOutputPins = {};
-        exportedInputPins  = {};
+        exportedInputPins = {};
         this.removeAllListeners();
 
         currentPins = undefined;
@@ -333,7 +337,7 @@ function Gpio() {
         debug('listen for pin %d', pin);
         var Gpio = this;
         fs.watchFile(
-            PATH + '/gpio' + pin + '/value',
+            path + '/gpio' + pin + '/value',
             {persistent: true, interval: pollFrequency},
             function(current, previous) {
                 if (current.mtime > previous.mtime) {
@@ -348,36 +352,49 @@ function Gpio() {
             }
         );
     };
+
+    var baseCommand = 'gpio-admin';
+
+    function setDirection(pin, direction, cb) {
+        debug('set direction %s on pin %d', direction.toUpperCase(), pin);
+        fs.writeFile(path + '/gpio' + pin + '/direction', direction, function(err) {
+            if (cb) {
+                return cb(err);
+            }
+        });
+    }
+
+    function exportPin(pin, cb) {
+        debug('export pin %d', pin);
+        if (options.gpioAdmin) {
+            execCommand(baseCommand + ' export ' + pin, cb);
+        } else {
+            fs.writeFile(path + '/export', pin, cb);
+        }
+    }
+
+    function unexportPin(pin, cb) {
+        debug('unexport pin %d', pin);
+        fs.unwatchFile(path + '/gpio' + pin + '/value');
+        if (options.gpioAdmin) {
+            execCommand(baseCommand + ' unexport ' + pin, cb);
+        } else {
+            fs.writeFile(path + '/unexport', pin, cb);
+        }
+    }
+
+    function isExported(pin, cb) {
+        fs.exists(path + '/gpio' + pin, function(exists) {
+            return cb(null, exists);
+        });
+    }
+
+    function setGpioAdmin(cb) {
+
+    }
+
 }
 util.inherits(Gpio, EventEmitter);
-
-var baseCommand = 'gpio-admin ';
-
-function setDirection(pin, direction, cb) {
-    debug('set direction %s on pin %d', direction.toUpperCase(), pin);
-    fs.writeFile(PATH + '/gpio' + pin + '/direction', direction, function(err) {
-        if (cb) {
-            return cb(err);
-        }
-    });
-}
-
-function exportPin(pin, cb) {
-    debug('export pin %d', pin);
-    execCommand(baseCommand + 'export ' + pin, cb);
-}
-
-function unexportPin(pin, cb) {
-    debug('unexport pin %d', pin);
-    fs.unwatchFile(PATH + '/gpio' + pin + '/value');
-    execCommand(baseCommand + 'unexport ' + pin, cb);
-}
-
-function isExported(pin, cb) {
-    fs.exists(PATH + '/gpio' + pin, function(exists) {
-        return cb(null, exists);
-    });
-}
 
 function execCommand(command, cb) {
 

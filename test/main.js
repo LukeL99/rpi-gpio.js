@@ -714,4 +714,16 @@ describe('rpi-gpio', function() {
         });
     });
 
+    //describe('gpio-admin integration', function() {
+    //
+    //    context('when initialized', function() {
+    //
+    //        gpio = require('../rpi-gpio')({gpioAdmin: true});
+    //
+    //        it('should set path to virtual path', function() {
+    //            gpio.path.should.equal('/sys/devices/virtual/gpio');
+    //        });
+    //    });
+    //});
+
 });
