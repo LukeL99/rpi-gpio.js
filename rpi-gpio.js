@@ -249,6 +249,7 @@ function Gpio(options) {
     this.destroy = function(cb) {
         if(poller){
             poller.close();
+            poller = undefined;
         }
         var tasks = Object.keys(exportedOutputPins)
             .concat(Object.keys(exportedInputPins))
