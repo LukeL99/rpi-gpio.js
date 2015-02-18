@@ -81,27 +81,7 @@ var PINS = {
     }
 };
 
-// OPTIONS:
-// gpioAdmin: true|false - whether to use gpioAdmin or not. If not, must be run as root.
-// mode: 'BCM'|'RPI' - Sets pin numbering scheme. Defaults to RPI;
-function Gpio(options) {
-
-    options = options || {};
-
-    var currentPins;
-    var exportedInputPins = {};
-    var exportedOutputPins = {};
-    var poller;
-
-    var getPin;
-    if(options.mode && options.mode == 'BCM'){
-        debug('Setting mode to BCM.');
-        getPin = getPinBcm;
-    } else {
-        debug('Setting mode to RPI.');
-        getPin = getPinRpi;
-    }
-    var path = options.gpioAdmin === true ? '/sys/devices/virtual/gpio' : '/sys/class/gpio';
+function Gpio() {
 
     this.DIR_IN = 'in';
     this.DIR_OUT = 'out';
@@ -109,6 +89,31 @@ function Gpio(options) {
     this.PULL_DOWN = 'pulldown';
     this.MODE_RPI = 'mode_rpi';
     this.MODE_BCM = 'mode_bcm';
+    this.GPIO_ADMIN_PATH = '/sys/devices/virtual/gpio';
+    this.ROOT_ACCESS_PATH = '/sys/class/gpio';
+
+    var currentPins;
+    var exportedInputPins = {};
+    var exportedOutputPins = {};
+    var poller;
+
+    var getPin = getPinRpi;
+    var path = this.GPIO_ADMIN_PATH;
+
+    // OPTIONS:
+    // gpioAdmin: true|false - whether to use gpioAdmin or not. If not, must be run as root. defaults true;
+    // mode: 'BCM'|'RPI' - Sets pin numbering scheme. Defaults to RPI;
+    this.init = function(options){
+        options = options || {};
+        if(options.mode && options.mode == 'BCM'){
+            debug('Setting mode to BCM.');
+            getPin = getPinBcm;
+        } else {
+            debug('Setting mode to RPI.');
+            getPin = getPinRpi;
+        }
+        path = options.gpioAdmin === true ? this.GPIO_ADMIN_PATH : this.ROOT_ACCESS_PATH;
+    };
 
     /**
      * Setup a channel for use as an input or output
@@ -424,4 +429,4 @@ function execCommand(command, cb) {
         });
 }
 
-module.exports = new Gpio;
+module.exports = new Gpio();
